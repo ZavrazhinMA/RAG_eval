@@ -1,5 +1,6 @@
-from sklearn.metrics import precision_score, recall_score, fbeta_score
+from sklearn.metrics import precision_score, recall_score, fbeta_score, ndcg_score
 from tqdm.auto import tqdm
+import numpy as np
 
 tqdm.pandas()
 
@@ -203,8 +204,8 @@ def calculate_mrr(df, retrieved_col, relevant_col, output_col='RR', verbose=True
 
         return 0
 
-    df[output_col] = df.apply(_reciprocal_rank, axis=1)
-    mrr = df[output_col].mean().round(3)
+    df[output_col] = df.progress_apply(_reciprocal_rank, axis=1)
+    mrr = round(df[output_col].mean(), 3)
     if verbose:
         print(f'MRR = {mrr}')
     if return_mrr:
@@ -246,8 +247,8 @@ def calculate_map(df, retrieved_col, relevant_col, output_col='AP', k=None, verb
 
         return ap_sum / len(relevant_docs) if relevant_docs else 0
 
-    df[output_col] = df.apply(_average_precision, axis=1)
-    map_value = df[output_col].mean().round(3)
+    df[output_col] = df.progress_apply(_average_precision, axis=1)
+    map_value = round(df[output_col].mean(), 3)
 
     if verbose:
         print(f'MAP@{k} = {map_value}')
@@ -256,3 +257,90 @@ def calculate_map(df, retrieved_col, relevant_col, output_col='AP', k=None, verb
         return df, map_value
     else:
         return df
+
+
+def calculate_ndcg_at_k(df, retrieved_col, relevant_col, output_col='NDCG@K', k=5, verbose=True, return_ndcg=True):
+    """
+    Рассчитывает NDCG@K для DataFrame.
+
+    Параметры:
+    df - DataFrame с данными.
+    retrieved_col - название столбца с найденными документами.
+    relevant_col - название столбца с релевантными документами.
+    output_col - название выходного столбца для сохранения NDCG@K.
+    k - количество верхних документов для оценки NDCG@K.
+    verbose - выводит значение NDCG@K, если True.
+    return_ndcg - возвращает значение NDCG@K, если True.
+
+    Возвращает:
+    DataFrame с добавленным столбцом NDCG@K и, опционально, значение среднего NDCG@K.
+    """
+
+    def _dcg_at_k(retrieved_docs, relevant_docs, k):
+        """
+        Рассчитывает DCG@K.
+        """
+        dcg = 0.0
+        for i, doc in enumerate(retrieved_docs[:k], start=1):
+            if doc in relevant_docs:
+                dcg += 1 / np.log2(i + 1)  # Используем логарифм с основанием 2 для скидки
+        return dcg
+
+    def _idcg_at_k(relevant_docs, k):
+        """
+        Рассчитывает идеальный DCG@K (IDCG@K).
+        """
+        idcg = 0.0
+        for i in range(min(len(relevant_docs), k)):
+            idcg += 1 / np.log2(i + 2)
+        return idcg
+
+    def _ndcg_at_k(row):
+        retrieved_docs = row[retrieved_col]
+        relevant_docs = set(row[relevant_col])
+
+        dcg_k = _dcg_at_k(retrieved_docs, relevant_docs, k)
+        idcg_k = _idcg_at_k(relevant_docs, k)
+
+        return dcg_k / idcg_k if idcg_k > 0 else 0
+
+    df[output_col] = df.progress_apply(_ndcg_at_k, axis=1)
+    avg_ndcg = round(df[output_col].mean(), 3)
+
+    if verbose:
+        print(f'MEAN NDCG@{k} = {avg_ndcg}')
+
+    if return_ndcg:
+        return df, avg_ndcg
+    else:
+        return df
+
+# def calculate_ndcg_sklearn(df, retrieved_col, relevant_col, output_col='NDCG@K', k=5, verbose=True,
+#                                  return_ndcg=True):
+#     """
+#     Calculates NDCG@K for a DataFrame using scikit-learn with fixed input format.
+#     """
+#
+#     def _calculate_ndcg(row):
+#         retrieved_docs = row[retrieved_col][:k]
+#         relevant_docs = set(row[relevant_col])
+#
+#         y_true = [1 if doc in relevant_docs else 0 for doc in retrieved_docs]
+#         y_score = y_true.copy()
+#
+#         if not relevant_docs:
+#             return 0.0
+#
+#         ndcg_k = ndcg_score([y_true], [y_score], k=k, ignore_ties=False)
+#         return ndcg_k
+#
+#     df[output_col] = df.progress_apply(_calculate_ndcg, axis=1)
+#     avg_ndcg = round(df[output_col].mean(), 3)
+#
+#     if verbose:
+#         print(f'MEAN NDCG@{k} = {avg_ndcg}')
+#
+#     if return_ndcg:
+#         return df, avg_ndcg
+#     else:
+#         return df
