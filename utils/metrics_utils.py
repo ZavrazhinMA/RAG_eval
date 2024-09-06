@@ -1,4 +1,4 @@
-from sklearn.metrics import precision_score, recall_score, fbeta_score, ndcg_score
+from sklearn.metrics import precision_score, recall_score, fbeta_score, ndcg_score, average_precision_score
 from tqdm.auto import tqdm
 import numpy as np
 
@@ -237,21 +237,71 @@ def calculate_map(df, retrieved_col, relevant_col, output_col='AP', k=None, verb
         if k is not None:
             retrieved_docs = retrieved_docs[:k]
 
+        y_true = [1 if doc in relevant_docs else 0 for doc in retrieved_docs]
+        y_score = np.arange(len(retrieved_docs), 0, -1)
         relevant_found = 0
         ap_sum = 0.0
+        total_relevant = sum(y_true)
+        if total_relevant == 0:
+            return 0.0
 
-        for i, doc in enumerate(retrieved_docs, start=1):
-            if doc in relevant_docs:
+        for i, (true_label, score) in enumerate(zip(y_true, y_score), start=1):
+            if true_label == 1:
                 relevant_found += 1
-                ap_sum += relevant_found / i  # Precision@i
+                precision_at_i = relevant_found / i
+                ap_sum += precision_at_i
 
-        return ap_sum / len(relevant_docs) if relevant_docs else 0
+        return ap_sum / total_relevant
 
     df[output_col] = df.progress_apply(_average_precision, axis=1)
     map_value = round(df[output_col].mean(), 3)
 
     if verbose:
         print(f'MAP@{k} = {map_value}')
+
+    if return_map:
+        return df, map_value
+    else:
+        return df
+
+
+def map_sklearn(df, retrieved_col, relevant_col, output_col='AP_sklearn', k=None, verbose=True, return_map=True):
+    """
+    Рассчитывает MAP для DataFrame с использованием sklearn.
+
+    Параметры:
+    df - DataFrame с данными.
+    retrieved_col - название столбца с найденными документами.
+    relevant_col - название столбца с релевантными документами.
+    output_col - название выходного столбца для сохранения AP.
+    k - (опционально) количество верхних документов для оценки AP@K (по умолчанию None, что означает использовать все документы).
+    verbose - выводит значение MAP, если True.
+    return_map - возвращает значение MAP, если True.
+
+    Возвращает:
+    DataFrame с добавленным столбцом AP и, опционально, значение MAP.
+    """
+
+    def _sklearn_average_precision(row):
+        retrieved_docs = row[retrieved_col]
+        relevant_docs = set(row[relevant_col])
+
+        if k is not None:
+            retrieved_docs = retrieved_docs[:k]
+
+        y_true = [1 if doc in relevant_docs else 0 for doc in retrieved_docs]
+        y_score = np.arange(len(retrieved_docs), 0, -1)
+
+        if sum(y_true) == 0:
+            return 0.0  # Если нет релевантных документов, AP = 0
+
+        return average_precision_score(y_true, y_score)
+
+    df[output_col] = df.progress_apply(_sklearn_average_precision, axis=1)
+    map_value = round(df[output_col].mean(), 3)
+
+    if verbose:
+        print(f'MAP@{k} (sklearn) = {map_value}')
 
     if return_map:
         return df, map_value
@@ -315,32 +365,3 @@ def calculate_ndcg_at_k(df, retrieved_col, relevant_col, output_col='NDCG@K', k=
     else:
         return df
 
-# def calculate_ndcg_sklearn(df, retrieved_col, relevant_col, output_col='NDCG@K', k=5, verbose=True,
-#                                  return_ndcg=True):
-#     """
-#     Calculates NDCG@K for a DataFrame using scikit-learn with fixed input format.
-#     """
-#
-#     def _calculate_ndcg(row):
-#         retrieved_docs = row[retrieved_col][:k]
-#         relevant_docs = set(row[relevant_col])
-#
-#         y_true = [1 if doc in relevant_docs else 0 for doc in retrieved_docs]
-#         y_score = y_true.copy()
-#
-#         if not relevant_docs:
-#             return 0.0
-#
-#         ndcg_k = ndcg_score([y_true], [y_score], k=k, ignore_ties=False)
-#         return ndcg_k
-#
-#     df[output_col] = df.progress_apply(_calculate_ndcg, axis=1)
-#     avg_ndcg = round(df[output_col].mean(), 3)
-#
-#     if verbose:
-#         print(f'MEAN NDCG@{k} = {avg_ndcg}')
-#
-#     if return_ndcg:
-#         return df, avg_ndcg
-#     else:
-#         return df
